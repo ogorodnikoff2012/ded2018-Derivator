@@ -6,6 +6,9 @@ int main() {
     CalculusGrammar::Parser parser;
     std::cout << "Very clever Vova calculator\n";
 
+    std::cout.precision(20);
+    std::cerr.precision(20);
+
     while (std::cout << ">> ", std::getline(std::cin, input)) {
         try {
             auto ast = parser.Parse(input);

@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.8)
 project(Derivator)
 
 set(CMAKE_CXX_STANDARD 17)
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -Wall -Wextra -fsanitize=address,undefined -D_GLIBCXX_DEBUG")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -Wall -Wextra -fsanitize=address,undefined")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -ggdb3 -Wall -Wextra -fsanitize=address,undefined -D_GLIBCXX_DEBUG")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -ggdb3 -Wall -Wextra -fsanitize=address,undefined")
 
 include_directories(include)
 

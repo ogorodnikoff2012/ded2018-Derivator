@@ -155,63 +155,62 @@ bool Function::DeepCompare(const ExpressionPtr& other) const {
 }
 
 template <class T>
-void AssociativeOpAlignment(const std::vector<ExpressionPtr>& operands, const std::vector<bool>& inverse, bool global_inverse,
-        std::vector<ExpressionPtr>* op_result, std::vector<bool>* inv_result) {
+void AssociativeOpAlign(const std::vector<AssociativeOperand>& operands, bool global_inverse, std::vector<AssociativeOperand>* result) {
     for (size_t i = 0; i < operands.size(); ++i) {
-        if (Is<T>(operands[i])) {
-            auto op = As<T>(operands[i]);
-            AssociativeOpAlignment<T>(op->GetOperands(), op->GetInverses(), inverse[i] ^ global_inverse, op_result, inv_result);
+        if (Is<T>(operands[i].expr)) {
+            auto op = As<T>(operands[i].expr);
+            AssociativeOpAlign<T>(op->GetOperands(), operands[i].inverse ^ global_inverse, result);
         } else {
-            op_result->push_back(operands[i]);
-            inv_result->push_back(inverse[i] ^ global_inverse);
+            result->push_back(operands[i]);
+            result->back().inverse ^= global_inverse;
+        }
+    }
+}
+
+static void MoveConstantsToEnd(std::vector<AssociativeOperand>* operands_ptr, int* last_nonconstant_ptr) {
+    auto& operands = *operands_ptr;
+    int& last_nonconstant = *last_nonconstant_ptr;
+
+    last_nonconstant = operands.size() - 1;
+    for (int i = operands.size() - 1; i >= 0; --i) {
+        if (Is<Constant>(operands[i].expr)) {
+            if (i != last_nonconstant) {
+                std::swap(operands[i], operands[last_nonconstant]);
+            }
+            --last_nonconstant;
         }
     }
 }
 
 ExpressionPtr Sum::Simplify() {
     if (summands_.size() == 1) {
-        if (negate_[0]) {
-            return std::make_shared<NegateOp>(summands_[0]->Simplify())->Simplify();
+        if (summands_[0].inverse) {
+            return std::make_shared<NegateOp>(summands_[0].expr)->Simplify();
         } else {
-            return summands_[0]->Simplify();
+            return summands_[0].expr->Simplify();
         }
     }
 
-    std::vector<ExpressionPtr> summands_copy;
-    std::vector<bool> negate_copy;
+    std::vector<AssociativeOperand> summands_copy;
 
-    AssociativeOpAlignment<Sum>(summands_, negate_, false, &summands_copy, &negate_copy);
+    AssociativeOpAlign<Sum>(summands_, false, &summands_copy);
 
     for (size_t i = 0; i < summands_copy.size(); ++i) {
-        summands_copy[i] = summands_copy[i]->Simplify();
-        if (Is<NegateOp>(summands_copy[i])) {
-            negate_copy[i] = !negate_copy[i];
-            summands_copy[i] = As<NegateOp>(summands_copy[i])->GetInnerExpr();
+        summands_copy[i].expr = summands_copy[i].expr->Simplify();
+        if (Is<NegateOp>(summands_copy[i].expr)) {
+            summands_copy[i].inverse ^= true;
+            summands_copy[i].expr = As<NegateOp>(summands_copy[i].expr)->GetInnerExpr();
         }
     }
 
     // Constant folding
-    int last_nonconstant = summands_copy.size() - 1;
-    for (int i = summands_copy.size() - 1; i >= 0; --i) {
-        if (Is<Constant>(summands_copy[i])) {
-            if (i != last_nonconstant) {
-                summands_copy[i].swap(summands_copy[last_nonconstant]);
-#ifdef _GLIBCXX_DEBUG
-                bool t = negate_copy[i];
-                negate_copy[i] = negate_copy[last_nonconstant];
-                negate_copy[last_nonconstant] = t;
-#else
-                std::swap(negate_copy[i], negate_copy[last_nonconstant]);
-#endif
-            }
-            --last_nonconstant;
-        }
-    }
+    int last_nonconstant = 0;
+    MoveConstantsToEnd(&summands_copy, &last_nonconstant);
 
     double value = 0;
     for (size_t i = last_nonconstant + 1; i < summands_copy.size(); ++i) {
-        double summand = As<Constant>(summands_copy[i])->GetValue();
-        if (negate_copy[i]) {
+        double summand = As<Constant>(summands_copy[i].expr)->GetValue();
+        if (summands_copy[i].inverse) {
             value -= summand;
         } else {
             value += summand;
@@ -220,43 +219,70 @@ ExpressionPtr Sum::Simplify() {
 
     if (!IsZero(value) || last_nonconstant < 0) {
         summands_copy.resize(last_nonconstant + 2);
-        negate_copy.resize(last_nonconstant + 2);
-        summands_copy.back() = BuildConstant(value);
-        negate_copy.back() = false;
+        summands_copy.back().expr = BuildConstant(value);
+        summands_copy.back().inverse = false;
     } else {
         summands_copy.resize(last_nonconstant + 1);
-        negate_copy.resize(last_nonconstant + 1);
     }
 
 
     if (summands_copy.size() == 1) {
-        if (negate_copy[0]) {
-            return std::make_shared<NegateOp>(summands_copy[0]->Simplify())->Simplify();
+        if (summands_copy[0].inverse) {
+            return std::make_shared<NegateOp>(summands_copy[0].expr)->Simplify();
         } else {
-            return summands_copy[0]->Simplify();
+            return summands_copy[0].expr->Simplify();
         }
     }
-    return std::make_shared<Sum>(std::move(summands_copy), std::move(negate_copy));
+
+    for (size_t i = 0; i < summands_copy.size(); ++i) {
+        if (Is<Constant>(summands_copy[i].expr)) {
+            continue;
+        }
+        double final_ratio = 1;
+        bool changed = false;
+        for (size_t j = i + 1; j < summands_copy.size(); ++j) {
+            if (Is<Constant>(summands_copy[j].expr)) {
+                continue;
+            }
+            double ratio = Ratio(summands_copy[j].expr, summands_copy[i].expr);
+            if (summands_copy[i].inverse ^ summands_copy[j].inverse) {
+                ratio *= -1;
+            }
+            if (!std::isnan(ratio)) {
+                summands_copy[j].expr = kConstantZero;
+                changed = true;
+                final_ratio += ratio;
+            }
+        }
+        if (changed) {
+            auto prod = std::make_shared<Product>();
+            *prod *= summands_copy[i].expr;
+            *prod *= BuildConstant(final_ratio);
+            summands_copy[i].expr = prod;
+        }
+    }
+
+    return std::make_shared<Sum>(std::move(summands_copy));
 }
 
 ExpressionPtr Sum::TakeDerivative(char var_name) {
-    std::vector<ExpressionPtr> summands;
+    decltype(summands_) summands;
     summands.reserve(summands_.size());
     for (const auto& summand : summands_) {
-        summands.emplace_back(summand->TakeDerivative(var_name));
+        summands.emplace_back(summand.expr->TakeDerivative(var_name), summand.inverse);
     }
 
-    return std::make_shared<Sum>(std::move(summands), negate_);
+    return std::make_shared<Sum>(std::move(summands))->Simplify();
 }
 
 ExpressionPtr Sum::Call(const std::vector<ExpressionPtr>& args) {
-    std::vector<ExpressionPtr> summands;
+    decltype(summands_) summands;
     summands.reserve(summands_.size());
     for (const auto& summand : summands_) {
-        summands.emplace_back(summand->Call(args));
+        summands.emplace_back(summand.expr->Call(args), summand.inverse);
     }
 
-    return std::make_shared<Sum>(std::move(summands), negate_);
+    return std::make_shared<Sum>(std::move(summands));
 }
 
 void Sum::Print(std::ostream& out, int cur_priority_level) const {
@@ -264,14 +290,14 @@ void Sum::Print(std::ostream& out, int cur_priority_level) const {
         out << '(';
     }
 
-    if (negate_[0]) {
+    if (summands_[0].inverse) {
         out << '-';
     }
-    summands_[0]->Print(out, kSumPriorityLevel + (negate_[0] ? 1 : 0));
+    summands_[0].expr->Print(out, kSumPriorityLevel + (summands_[0].inverse ? 1 : 0));
 
     for (size_t i = 1; i < summands_.size(); ++i) {
-        out << (negate_[i] ? " - " : " + ");
-        summands_[i]->Print(out, kSumPriorityLevel + (negate_[i] ? 1 : 0));
+        out << (summands_[i].inverse ? " - " : " + ");
+        summands_[i].expr->Print(out, kSumPriorityLevel + (summands_[i].inverse ? 1 : 0));
     }
 
     if (cur_priority_level > kSumPriorityLevel) {
@@ -285,7 +311,7 @@ bool Sum::DeepCompare(const ExpressionPtr& other) const {
         return false;
     }
     for (size_t i = 0; i < summands_.size(); ++i) {
-        if (negate_[i] != ptr->negate_[i] || !summands_[i]->DeepCompare(ptr->summands_[i])) {
+        if (summands_[i].inverse != ptr->summands_[i].inverse || !summands_[i].expr->DeepCompare(ptr->summands_[i].expr)) {
             return false;
         }
     }
@@ -293,63 +319,45 @@ bool Sum::DeepCompare(const ExpressionPtr& other) const {
 }
 
 Sum& Sum::operator+=(const ExpressionPtr& expr) {
-    summands_.emplace_back(expr);
-    negate_.push_back(false);
+    summands_.emplace_back(expr, false);
     return *this;
 }
 
 Sum& Sum::operator-=(const ExpressionPtr& expr) {
-    summands_.emplace_back(expr);
-    negate_.push_back(true);
+    summands_.emplace_back(expr, true);
     return *this;
 }
 
 void Sum::ReserveSize(int size) {
     summands_.reserve(size);
-    negate_.reserve(size);
 }
 
 ExpressionPtr Product::Simplify() {
-    if (multipliers_.size() == 1 && inverse_[0] == false) {
-        return multipliers_[0]->Simplify();
+    if (multipliers_.size() == 1 && !multipliers_[0].inverse) {
+        return multipliers_[0].expr->Simplify();
     }
-    std::vector<ExpressionPtr> multipliers_copy;
-    std::vector<bool> inverse_copy;
+    std::vector<AssociativeOperand> multipliers_copy;
 
-    AssociativeOpAlignment<Product>(multipliers_, inverse_, false, &multipliers_copy, &inverse_copy);
+    AssociativeOpAlign<Product>(multipliers_, false, &multipliers_copy);
 
     bool need_to_be_negated = false;
 
     for (size_t i = 0; i < multipliers_copy.size(); ++i) {
-        multipliers_copy[i] = multipliers_copy[i]->Simplify();
-        if (Is<NegateOp>(multipliers_copy[i])) {
+        multipliers_copy[i].expr = multipliers_copy[i].expr->Simplify();
+        if (Is<NegateOp>(multipliers_copy[i].expr)) {
             need_to_be_negated ^= true;
-            multipliers_copy[i] = As<NegateOp>(multipliers_copy[i])->GetInnerExpr();
+            multipliers_copy[i].expr = As<NegateOp>(multipliers_copy[i].expr)->GetInnerExpr();
         }
     }
 
     // Constant folding
-    int last_nonconstant = multipliers_copy.size() - 1;
-    for (int i = multipliers_copy.size() - 1; i >= 0; --i) {
-        if (Is<Constant>(multipliers_copy[i])) {
-            if (i != last_nonconstant) {
-                multipliers_copy[i].swap(multipliers_copy[last_nonconstant]);
-#ifdef _GLIBCXX_DEBUG
-                bool t = inverse_copy[i];
-                inverse_copy[i] = inverse_copy[last_nonconstant];
-                inverse_copy[last_nonconstant] = t;
-#else
-                std::swap(inverse_copy[i], inverse_copy[last_nonconstant]);
-#endif
-            }
-            --last_nonconstant;
-        }
-    }
+    int last_nonconstant = 0;
+    MoveConstantsToEnd(&multipliers_copy, &last_nonconstant);
 
     double value = 1;
     for (size_t i = last_nonconstant + 1; i < multipliers_copy.size(); ++i) {
-        double multiplier = As<Constant>(multipliers_copy[i])->GetValue();
-        if (inverse_copy[i]) {
+        double multiplier = As<Constant>(multipliers_copy[i].expr)->GetValue();
+        if (multipliers_copy[i].inverse) {
             if (IsZero(multiplier)) {
                 throw RuntimeError("Division by zero");
             }
@@ -369,21 +377,33 @@ ExpressionPtr Product::Simplify() {
 
     if (IsZero(value - 1) || IsZero(value + 1)) {
         multipliers_copy.resize(last_nonconstant + 1);
-        inverse_copy.resize(last_nonconstant + 1);
-        ExpressionPtr result = std::make_shared<Product>(std::move(multipliers_copy), std::move(inverse_copy));
-        if (IsZero(value + 1) ^ need_to_be_negated) {
-            return std::make_shared<NegateOp>(result);
-        } else {
-            return result;
+        need_to_be_negated ^= IsZero(value + 1);
+    } else {
+        multipliers_copy.resize(last_nonconstant + 2);
+        multipliers_copy.back().expr = BuildConstant(value);
+        multipliers_copy.back().inverse = false;
+    }
+
+    for (size_t i = 0; i < multipliers_copy.size(); ++i) {
+        if (Is<Constant>(multipliers_copy[i].expr)) {
+            continue;
+        }
+        for (size_t j = i + 1; j < multipliers_copy.size(); ++j) {
+            if (Is<Constant>(multipliers_copy[j].expr)) {
+                continue;
+            }
+            if (multipliers_copy[i].inverse != multipliers_copy[j].inverse) {
+                double ratio = Ratio(multipliers_copy[i].expr, multipliers_copy[j].expr);
+                if (!std::isnan(ratio)) {
+                    multipliers_copy[i].expr = BuildConstant(ratio);
+                    multipliers_copy[j].expr = kConstantOne;
+                    break;
+                }
+            }
         }
     }
 
-    multipliers_copy.resize(last_nonconstant + 2);
-    inverse_copy.resize(last_nonconstant + 2);
-    multipliers_copy.back() = BuildConstant(value);
-    inverse_copy.back() = false;
-
-    auto result = std::make_shared<Product>(std::move(multipliers_copy), std::move(inverse_copy));
+    auto result = std::make_shared<Product>(std::move(multipliers_copy));
     if (need_to_be_negated) {
         return std::make_shared<NegateOp>(result);
     }
@@ -396,31 +416,30 @@ ExpressionPtr Product::TakeDerivative(char var_name) {
 
     for (size_t i = 0; i < multipliers_.size(); ++i) {
         auto multipliers_copy = multipliers_;
-        auto inverse_copy = inverse_;
-        multipliers_copy[i] = multipliers_copy[i]->TakeDerivative(var_name);
-        inverse_copy[i] = false;
+        multipliers_copy[i].expr = multipliers_copy[i].expr->TakeDerivative(var_name);
+        multipliers_copy[i].inverse = false;
 
-        auto summand = std::make_shared<Product>(std::move(multipliers_copy), std::move(inverse_copy));
-        if (inverse_[i]) {
-            *summand /= multipliers_[i];
-            *summand /= multipliers_[i];
+        auto summand = std::make_shared<Product>(std::move(multipliers_copy));
+        if (multipliers_[i].inverse) {
+            *summand /= multipliers_[i].expr;
+            *summand /= multipliers_[i].expr;
             *result -= summand;
         } else {
             *result += summand;
         }
     }
 
-    return result;
+    return result->Simplify();
 }
 
 ExpressionPtr Product::Call(const std::vector<ExpressionPtr>& args) {
-    std::vector<ExpressionPtr> multipliers;
+    decltype(multipliers_) multipliers;
     multipliers.reserve(multipliers_.size());
     for (const auto& multiplier : multipliers_) {
-        multipliers.emplace_back(multiplier->Call(args));
+        multipliers.emplace_back(multiplier.expr->Call(args), multiplier.inverse);
     }
 
-    return std::make_shared<Product>(std::move(multipliers), inverse_);
+    return std::make_shared<Product>(std::move(multipliers))->Simplify();
 }
 
 void Product::Print(std::ostream& out, int cur_priority_level) const {
@@ -428,14 +447,21 @@ void Product::Print(std::ostream& out, int cur_priority_level) const {
         out << '(';
     }
 
-    if (inverse_[0]) {
-        out << "1 / ";
-    }
-    multipliers_[0]->Print(out, kProdPriorityLevel + (inverse_[0] ? 1 : 0));
+    bool skip_last = false;
 
-    for (size_t i = 1; i < multipliers_.size(); ++i) {
-        out << (inverse_[i] ? " / " : " * ");
-        multipliers_[i]->Print(out, kProdPriorityLevel + (inverse_[i] ? 1 : 0));
+    if (multipliers_[0].inverse) {
+        if (Is<Constant>(multipliers_.back().expr) && !multipliers_.back().inverse) {
+            out << As<Constant>(multipliers_.back().expr)->GetValue() << " / ";
+            skip_last = true;
+        } else {
+            out << "1 / ";
+        }
+    }
+    multipliers_[0].expr->Print(out, kProdPriorityLevel + (multipliers_[0].inverse ? 1 : 0));
+
+    for (size_t i = 1, n = multipliers_.size() - (skip_last ? 1 : 0); i < n; ++i) {
+        out << (multipliers_[i].inverse ? " / " : " * ");
+        multipliers_[i].expr->Print(out, kProdPriorityLevel + (multipliers_[i].inverse ? 1 : 0));
     }
     if (cur_priority_level > kProdPriorityLevel) {
         out << ')';
@@ -448,7 +474,8 @@ bool Product::DeepCompare(const ExpressionPtr& other) const {
         return false;
     }
     for (size_t i = 0; i < multipliers_.size(); ++i) {
-        if (inverse_[i] != ptr->inverse_[i] || !multipliers_[i]->DeepCompare(ptr->multipliers_[i])) {
+        if (multipliers_[i].inverse != ptr->multipliers_[i].inverse ||
+                !multipliers_[i].expr->DeepCompare(ptr->multipliers_[i].expr)) {
             return false;
         }
     }
@@ -456,20 +483,17 @@ bool Product::DeepCompare(const ExpressionPtr& other) const {
 }
 
 Product& Product::operator*=(const ExpressionPtr& expr) {
-    multipliers_.emplace_back(expr);
-    inverse_.push_back(false);
+    multipliers_.emplace_back(expr, false);
     return *this;
 }
 
 Product& Product::operator/=(const ExpressionPtr& expr) {
-    multipliers_.emplace_back(expr);
-    inverse_.push_back(true);
+    multipliers_.emplace_back(expr, true);
     return *this;
 }
 
 void Product::ReserveSize(int size) {
     multipliers_.reserve(size);
-    inverse_.reserve(size);
 }
 
 ExpressionPtr NegateOp::Simplify() {
@@ -477,9 +501,9 @@ ExpressionPtr NegateOp::Simplify() {
         return BuildConstant(-As<Constant>(expr_)->GetValue());
     }
     if (Is<NegateOp>(expr_)) {
-        return As<NegateOp>(expr_)->GetInnerExpr();
+        return As<NegateOp>(expr_)->GetInnerExpr()->Simplify();
     }
-    return shared_from_this();
+    return std::make_shared<NegateOp>(expr_->Simplify());
 }
 
 ExpressionPtr NegateOp::TakeDerivative(char var_name) {
@@ -598,6 +622,179 @@ bool CallOp::DeepCompare(const ExpressionPtr& other) const {
         }
     }
     return true;
+}
+
+static double RatioOfSums(const std::vector<AssociativeOperand>& l_summands, const std::vector<AssociativeOperand>& r_summands) {
+    std::vector<bool> l_used(l_summands.size(), false);
+    std::vector<bool> r_used(r_summands.size(), false);
+    std::vector<std::vector<double>> ratios(l_summands.size(), std::vector<double>(r_summands.size(), std::nan("")));
+
+    double final_ratio = std::nan("");
+
+    for (size_t l_index = 0; l_index < l_summands.size(); ++l_index) {
+        if (l_used[l_index]) {
+            continue;
+        }
+
+        l_used[l_index] = true;
+
+        std::vector<int> r_active;
+        for (size_t r_index = 0; r_index < r_summands.size(); ++r_index) {
+            if (r_used[r_index]) {
+                continue;
+            }
+
+            ratios[l_index][r_index] = Ratio(l_summands[l_index].expr, r_summands[r_index].expr);
+            if (l_summands[l_index].inverse ^ r_summands[r_index].inverse) {
+                ratios[l_index][r_index] *= -1;
+            }
+
+            if (!std::isnan(ratios[l_index][r_index])) {
+                r_used[r_index] = true;
+                r_active.push_back(r_index);
+            }
+        }
+
+        if (r_active.empty()) {
+            return std::nan("");
+        }
+
+        std::vector<size_t> l_active{l_index};
+
+        for (size_t l_candidate = l_index + 1; l_candidate < l_summands.size(); ++l_candidate) {
+            bool success = true;
+            for (int r_index : r_active) {
+                ratios[l_candidate][r_index] = Ratio(l_summands[l_candidate].expr, r_summands[r_index].expr);
+                if (l_summands[l_candidate].inverse ^ r_summands[r_index].inverse) {
+                    ratios[l_candidate][r_index] *= -1;
+                }
+                if (std::isnan(ratios[l_candidate][r_index])) {
+                    success = false;
+                    break;
+                }
+            }
+            if (success) {
+                l_active.push_back(l_candidate);
+                l_used[l_candidate] = true;
+            }
+        }
+
+        double current_ratio = 0;
+        for (auto r_index : r_active) {
+            double sum = 0;
+            for (auto l_index : l_active) {
+                sum += ratios[l_index][r_index];
+            }
+            current_ratio += 1 / sum;
+        }
+        current_ratio = 1 / current_ratio;
+
+        if (!std::isnan(final_ratio) && !IsZero(final_ratio - current_ratio)) {
+            return std::nan("");
+        }
+        final_ratio = current_ratio;
+    }
+
+    return final_ratio;
+}
+
+static double RatioOfProducts(const std::vector<AssociativeOperand>& l_multipliers, const std::vector<AssociativeOperand>& r_multipliers) {
+    std::vector<bool> used(r_multipliers.size(), false);
+
+    double const_ratio = 1;
+
+    for (size_t i = 0; i < r_multipliers.size(); ++i) {
+        if (Is<Constant>(r_multipliers[i].expr)) {
+            used[i] = true;
+            double value = As<Constant>(r_multipliers[i].expr)->GetValue();
+            if (r_multipliers[i].inverse) {
+                const_ratio *= value;
+            } else {
+                const_ratio /= value;
+            }
+        }
+    }
+
+    for (size_t l_index = 0; l_index < l_multipliers.size(); ++l_index) {
+        if (Is<Constant>(l_multipliers[l_index].expr)) {
+            double value = As<Constant>(l_multipliers[l_index].expr)->GetValue();
+            if (l_multipliers[l_index].inverse) {
+                const_ratio *= value;
+            } else {
+                const_ratio /= value;
+            }
+            continue;
+        }
+
+        bool success = false;
+        for (size_t r_index = 0; r_index < r_multipliers.size(); ++r_index) {
+            if (!used[r_index] && l_multipliers[l_index].inverse == r_multipliers[r_index].inverse &&
+                    l_multipliers[l_index].expr->DeepCompare(r_multipliers[r_index].expr)) {
+                success = true;
+                used[r_index] = true;
+                break;
+            }
+        }
+
+        if (!success) {
+            return std::nan("");
+        }
+    }
+
+    for (bool flag : used) {
+        if (!flag) {
+            return std::nan("");
+        }
+    }
+    return const_ratio;
+}
+
+double Ratio(const ExpressionPtr& lhs, const ExpressionPtr& rhs) {
+    if (Is<NegateOp>(lhs)) {
+        return -Ratio(As<NegateOp>(lhs)->GetInnerExpr(), rhs);
+    }
+    if (Is<NegateOp>(rhs)) {
+        return -Ratio(lhs, As<NegateOp>(rhs)->GetInnerExpr());
+    }
+
+    if (Is<Constant>(lhs) && Is<Constant>(rhs)) {
+        return As<Constant>(lhs)->GetValue() / As<Constant>(rhs)->GetValue();
+    }
+
+    if (lhs->DeepCompare(rhs)) {
+        return 1;
+    }
+
+    if (Is<Product>(lhs)) {
+        const auto& l_multipliers = As<Product>(lhs)->GetOperands();
+        if (l_multipliers.size() == 2) {
+            if (Is<Constant>(l_multipliers[0].expr) && !l_multipliers[1].inverse) {
+                double r = Ratio(l_multipliers[1].expr, rhs);
+                double alpha = As<Constant>(l_multipliers[0].expr)->GetValue();
+                return l_multipliers[0].inverse ? r / alpha : r * alpha;
+            }
+            if (Is<Constant>(l_multipliers[1].expr) && !l_multipliers[0].inverse) {
+                double r = Ratio(l_multipliers[0].expr, rhs);
+                double alpha = As<Constant>(l_multipliers[1].expr)->GetValue();
+                return l_multipliers[1].inverse ? r / alpha : r * alpha;
+            }
+        }
+
+        if (Is<Product>(rhs)) {
+            const auto& r_multipliers = As<Product>(rhs)->GetOperands();
+            return RatioOfProducts(l_multipliers, r_multipliers);
+        }
+    } else if (Is<Product>(rhs)) {
+        return 1 / Ratio(rhs, lhs);
+    }
+
+    if (Is<Sum>(lhs) && Is<Sum>(rhs)) {
+        const auto& l_summands = As<Sum>(lhs)->GetOperands();
+        const auto& r_summands = As<Sum>(rhs)->GetOperands();
+        return RatioOfSums(l_summands, r_summands);
+    }
+
+    return std::nan("");
 }
 
 }

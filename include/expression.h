@@ -93,13 +93,23 @@ private:
     std::string name_;
 };
 
+struct AssociativeOperand {
+    ExpressionPtr expr;
+    bool inverse;
+
+    template <class EPtr>
+    AssociativeOperand(EPtr&& expr, bool inverse) : expr(std::forward<EPtr>(expr)), inverse(inverse) {
+    }
+
+    AssociativeOperand() = default;
+};
+
 class Sum : public Expression {
 public:
     Sum() = default;
 
-    template <class Vec1, class Vec2>
-    Sum(Vec1&& summands, Vec2&& negate)
-        : summands_(std::forward<Vec1>(summands)), negate_(std::forward<Vec2>(negate)) {
+    template <class Vector>
+    explicit Sum(Vector&& summands) : summands_(std::forward<Vector>(summands)) {
     }
 
     virtual ExpressionPtr Simplify() override;
@@ -112,26 +122,20 @@ public:
     Sum& operator-=(const ExpressionPtr& expr);
     void ReserveSize(int size);
 
-    const std::vector<ExpressionPtr>& GetOperands() const {
+    const std::vector<AssociativeOperand>& GetOperands() const {
         return summands_;
     }
 
-    const std::vector<bool>& GetInverses() const {
-        return negate_;
-    }
-
 private:
-    std::vector<ExpressionPtr> summands_;
-    std::vector<bool> negate_;
+    std::vector<AssociativeOperand> summands_;
 };
 
 class Product : public Expression {
 public:
     Product() = default;
 
-    template <class Vec1, class Vec2>
-    Product(Vec1&& multipliers, Vec2&& inverse)
-        : multipliers_(std::forward<Vec1>(multipliers)), inverse_(std::forward<Vec2>(inverse)) {
+    template <class Vector>
+    explicit Product(Vector&& multipliers) : multipliers_(std::forward<Vector>(multipliers)) {
     }
 
     virtual ExpressionPtr Simplify() override;
@@ -144,17 +148,12 @@ public:
     Product& operator/=(const ExpressionPtr& expr);
     void ReserveSize(int size);
 
-    const std::vector<ExpressionPtr>& GetOperands() const {
+    const std::vector<AssociativeOperand>& GetOperands() const {
         return multipliers_;
     }
 
-    const std::vector<bool>& GetInverses() const {
-        return inverse_;
-    }
-
 private:
-    std::vector<ExpressionPtr> multipliers_;
-    std::vector<bool> inverse_;
+    std::vector<AssociativeOperand> multipliers_;
 };
 
 class NegateOp : public Expression {
@@ -214,5 +213,7 @@ private:
     ExpressionPtr func_;
     std::vector<ExpressionPtr> args_;
 };
+
+double Ratio(const ExpressionPtr& lhs, const ExpressionPtr& rhs);
 
 } /* namespace */
