@@ -897,9 +897,9 @@ ExpressionPtr PowerOp::Simplify() {
         }
     }
     if (Is<PowerOp>(base_)) {
-        auto new_exp = std::make_shared<Sum>();
-        *new_exp += exp_;
-        *new_exp += As<PowerOp>(base_)->exp_;
+        auto new_exp = std::make_shared<Product>();
+        *new_exp *= exp_;
+        *new_exp *= As<PowerOp>(base_)->exp_;
         return std::make_shared<PowerOp>(As<PowerOp>(base_)->base_, new_exp)->Simplify();
     }
     if (Is<Product>(base_)) {
