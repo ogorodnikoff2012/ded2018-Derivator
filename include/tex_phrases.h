@@ -13,6 +13,8 @@ static constexpr char kTexPreamble[] = R"(
 \usepackage{indentfirst}
 \usepackage{amsfonts}
 \usepackage{paralist}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
 
 \title{Домашнее задание по математическому анализу}
 \author{Владимир Огородников}
@@ -26,7 +28,7 @@ static constexpr char kTexPreamble[] = R"(
 )";
 
 static constexpr char kTexEnd[] = R"(
-Powered by Tungsten Beta
+\texttt{Powered by Tungsten Beta}
 \end{document}
 )";
 

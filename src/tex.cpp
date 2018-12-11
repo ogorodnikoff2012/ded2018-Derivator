@@ -33,6 +33,15 @@ int main(int argc, char* argv[]) {
     while (std::getline(std::cin, line)) {
         std::cout << "\\section{}\n";
         auto expr = parser.Parse(line)->BuildExpression();
+        std::cout << R"(
+Input:
+\begin{tcolorbox}[colback=yellow!40]
+\begin{minipage}{0.9\textwidth}\begin{verbatim}
+)" << line << R"(
+\end{verbatim}
+\end{minipage}
+\end{tcolorbox}
+)";
         try {
             while (true) {
                 std::cout << "$$";

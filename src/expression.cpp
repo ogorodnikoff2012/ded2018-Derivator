@@ -253,8 +253,8 @@ ExpressionPtr Sum::Simplify() {
 
     if (!IsZero(value) || last_nonconstant < 0) {
         summands_copy.resize(last_nonconstant + 2);
-        summands_copy.back().expr = BuildConstant(value);
-        summands_copy.back().inverse = false;
+        summands_copy.back().expr = BuildConstant(std::abs(value));
+        summands_copy.back().inverse = value < 0;
     } else {
         summands_copy.resize(last_nonconstant + 1);
     }
