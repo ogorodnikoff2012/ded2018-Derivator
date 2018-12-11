@@ -1,5 +1,6 @@
 #include <expression.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <cmath>
 #include <ostream>
 
@@ -41,6 +42,10 @@ static const std::unordered_map<std::string, double(*)(double)> kUnaryFunctionTa
     {"id",  [](double x) { return x; }},
 };
 
+static const std::unordered_set<std::string> kTableOfLaTeXDeclaredFunctions = {
+    "sin", "cos", "log", "exp"
+};
+
 static bool IsZero(double x) {
     return std::fabs(x) < kDoubleTolerance;
 }
@@ -77,6 +82,10 @@ void Constant::Print(std::ostream& out, int) const {
     out << value_;
 }
 
+void Constant::TexDump(std::ostream& out, int) const {
+    out << value_;
+}
+
 bool Constant::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     return std::fabs(value_ - ptr->value_) < kDoubleTolerance;
@@ -101,6 +110,10 @@ ExpressionPtr Variable::Substitute(char var_name, const ExpressionPtr& other) {
 }
 
 void Variable::Print(std::ostream& out, int) const {
+    out << name_;
+}
+
+void Variable::TexDump(std::ostream& out, int) const {
     out << name_;
 }
 
@@ -158,6 +171,13 @@ ExpressionPtr Function::Substitute(char, const ExpressionPtr&) {
 }
 
 void Function::Print(std::ostream& out, int) const {
+    out << name_;
+}
+
+void Function::TexDump(std::ostream& out, int) const {
+    if (kTableOfLaTeXDeclaredFunctions.find(name_) != kTableOfLaTeXDeclaredFunctions.end()) {
+        out << '\\';
+    }
     out << name_;
 }
 
@@ -329,6 +349,26 @@ void Sum::Print(std::ostream& out, int cur_priority_level) const {
     }
 }
 
+void Sum::TexDump(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kSumPriorityLevel) {
+        out << "\\left(";
+    }
+
+    if (summands_[0].inverse) {
+        out << '-';
+    }
+    summands_[0].expr->TexDump(out, kSumPriorityLevel + (summands_[0].inverse ? 1 : 0));
+
+    for (size_t i = 1; i < summands_.size(); ++i) {
+        out << (summands_[i].inverse ? " - " : " + ");
+        summands_[i].expr->TexDump(out, kSumPriorityLevel + (summands_[i].inverse ? 1 : 0));
+    }
+
+    if (cur_priority_level > kSumPriorityLevel) {
+        out << "\\right)";
+    }
+}
+
 bool Sum::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     if (summands_.size() != ptr->summands_.size()) {
@@ -373,6 +413,14 @@ ExpressionPtr Product::Simplify() {
         if (Is<NegateOp>(multipliers_copy[i].expr)) {
             need_to_be_negated ^= true;
             multipliers_copy[i].expr = As<NegateOp>(multipliers_copy[i].expr)->GetInnerExpr();
+        }
+        if (multipliers_copy[i].inverse && Is<PowerOp>(multipliers_copy[i].expr)) {
+            auto expr = As<PowerOp>(multipliers_copy[i].expr);
+            if (Is<Constant>(expr->GetExp()) && As<Constant>(expr->GetExp())->GetValue() - kDoubleTolerance > 0) {
+                continue;
+            }
+            multipliers_copy[i].inverse = false;
+            multipliers_copy[i].expr = std::make_shared<PowerOp>(expr->GetBase(), std::make_shared<NegateOp>(expr->GetExp()));
         }
     }
 
@@ -546,6 +594,53 @@ void Product::Print(std::ostream& out, int cur_priority_level) const {
     }
 }
 
+static void PrintProduct(std::ostream& out, const std::vector<const ExpressionPtr*>& multipliers) {
+    bool was_prev_a_number = false;
+    for (size_t i = 0; i < multipliers.size(); ++i) {
+        bool is_number = Is<Constant>(*multipliers[i]);
+        if ((i > 0 && is_number) || was_prev_a_number) {
+            out << "\\cdot ";
+        }
+        multipliers[i]->get()->TexDump(out, kProdPriorityLevel);
+        was_prev_a_number = is_number;
+    }
+}
+
+void Product::TexDump(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kProdPriorityLevel) {
+        out << "\\left(";
+    }
+
+    std::vector<const ExpressionPtr*> numerator;
+    std::vector<const ExpressionPtr*> denominator;
+
+    for (const auto& multiplier : multipliers_) {
+        if (multiplier.inverse) {
+            denominator.push_back(&multiplier.expr);
+        } else {
+            numerator.push_back(&multiplier.expr);
+        }
+    }
+
+    if (!denominator.empty()) {
+        out << "\\frac{";
+    }
+    if (numerator.empty()) {
+        out << "1";
+    } else {
+        PrintProduct(out, numerator);
+    }
+    if (!denominator.empty()) {
+        out << "}{";
+        PrintProduct(out, denominator);
+        out << "}";
+    }
+
+    if (cur_priority_level > kProdPriorityLevel) {
+        out << "\\right)";
+    }
+}
+
 bool Product::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     if (multipliers_.size() != ptr->multipliers_.size()) {
@@ -583,6 +678,13 @@ ExpressionPtr NegateOp::Simplify() {
     if (Is<NegateOp>(expr_)) {
         return As<NegateOp>(expr_)->GetInnerExpr()->Simplify();
     }
+    if (Is<Sum>(expr_)) {
+        auto summands_copy = As<Sum>(expr_)->GetOperands();
+        for (size_t i = 0; i < summands_copy.size(); ++i) {
+            summands_copy[i].inverse ^= true;
+        }
+        return std::make_shared<Sum>(std::move(summands_copy));
+    }
     return std::make_shared<NegateOp>(expr_->Simplify());
 }
 
@@ -607,6 +709,18 @@ void NegateOp::Print(std::ostream& out, int cur_priority_level) const {
     expr_->Print(out, kPrefixOpPriorityLevel);
     if (cur_priority_level > kPrefixOpPriorityLevel) {
         out << ')';
+    }
+}
+
+void NegateOp::TexDump(std::ostream& out, int cur_priority_level) const {
+    out << '-';
+
+    if (cur_priority_level > kPrefixOpPriorityLevel) {
+        out << "\\left(";
+    }
+    expr_->TexDump(out, kPrefixOpPriorityLevel);
+    if (cur_priority_level > kPrefixOpPriorityLevel) {
+        out << "\\right)";
     }
 }
 
@@ -645,6 +759,19 @@ void DifferentiateOp::Print(std::ostream& out, int cur_priority_level) const {
     expr_->Print(out, kPostfixOpPriorityLevel);
     if (cur_priority_level > kPostfixOpPriorityLevel) {
         out << ')';
+    }
+    out << "'_" << var_name_;
+}
+
+void DifferentiateOp::TexDump(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kPostfixOpPriorityLevel + 1) {
+        out << "\\left(";
+    }
+    out << '{';
+    expr_->TexDump(out, kPostfixOpPriorityLevel + 1);
+    out << '}';
+    if (cur_priority_level > kPostfixOpPriorityLevel + 1) {
+        out << "\\right)";
     }
     out << "'_" << var_name_;
 }
@@ -715,6 +842,19 @@ void CallOp::Print(std::ostream& out, int cur_priority_level) const {
     out << ')';
 }
 
+void CallOp::TexDump(std::ostream& out, int cur_priority_level) const {
+    func_->TexDump(out, cur_priority_level);
+    out << "\\left(";
+    if (!args_.empty()) {
+        args_[0]->TexDump(out, kSumPriorityLevel);
+        for (size_t i = 1; i < args_.size(); ++i) {
+            out << ", ";
+            args_[i]->TexDump(out, kSumPriorityLevel);
+        }
+    }
+    out << "\\right)";
+}
+
 bool CallOp::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     if (args_.size() != ptr->args_.size()) {
@@ -762,6 +902,13 @@ ExpressionPtr PowerOp::Simplify() {
         *new_exp += As<PowerOp>(base_)->exp_;
         return std::make_shared<PowerOp>(As<PowerOp>(base_)->base_, new_exp)->Simplify();
     }
+    if (Is<Product>(base_)) {
+        auto multipliers_copy = As<Product>(base_)->GetOperands();
+        for (auto& multiplier : multipliers_copy) {
+            multiplier.expr = std::make_shared<PowerOp>(multiplier.expr, exp_);
+        }
+        return std::make_shared<Product>(std::move(multipliers_copy))->Simplify();
+    }
     return std::make_shared<PowerOp>(base_->Simplify(), exp_->Simplify());
 }
 
@@ -806,6 +953,25 @@ void PowerOp::Print(std::ostream& out, int cur_priority_level) const {
     }
 }
 
+void PowerOp::TexDump(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << "\\left(";
+    }
+    if (Is<Constant>(exp_) && IsZero(As<Constant>(exp_)->GetValue() - 0.5)) {
+        out << "\\sqrt{";
+        base_->TexDump(out, kPostfixOpPriorityLevel);
+        out << '}';
+    } else {
+        base_->TexDump(out, kPostfixOpPriorityLevel);
+        out << "^{";
+        exp_->TexDump(out, kPostfixOpPriorityLevel);
+        out << '}';
+    }
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << "\\right)";
+    }
+}
+
 bool PowerOp::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     return base_->DeepCompare(ptr->base_) && exp_->DeepCompare(ptr->exp_);
@@ -839,6 +1005,20 @@ void SubstOp::Print(std::ostream& out, int cur_priority_level) const {
     out << ']';
     if (cur_priority_level > kPostfixOpPriorityLevel) {
         out << ')';
+    }
+}
+
+void SubstOp::TexDump(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << "\\left(";
+    }
+    out << "\\left.";
+    target_->TexDump(out, kPostfixOpPriorityLevel);
+    out << "\\right|_{" << var_name_ << " = ";
+    value_->TexDump(out, kSumPriorityLevel);
+    out << "}";
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << "\\right)";
     }
 }
 

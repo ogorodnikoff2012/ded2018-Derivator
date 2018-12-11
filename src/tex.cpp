@@ -31,18 +31,19 @@ int main(int argc, char* argv[]) {
     CalculusGrammar::Parser parser;
 
     while (std::getline(std::cin, line)) {
-        std::cout << "\\section{}";
+        std::cout << "\\section{}\n";
         auto expr = parser.Parse(line)->BuildExpression();
         try {
             while (true) {
                 std::cout << "$$";
                 expr->TexDump(std::cout);
-                std::cout << "$$";
+                std::cout << "$$\n\n";
 
                 auto new_expr = expr->Simplify();
                 if (new_expr->DeepCompare(expr)) {
                     break;
                 }
+                expr = new_expr;
             }
         } catch (const std::exception& e) {
             std::cout << kTexError << "\\texttt{" << e.what() << "}";

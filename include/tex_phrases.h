@@ -18,12 +18,15 @@ static constexpr char kTexPreamble[] = R"(
 \author{Владимир Огородников}
 \date{}
 
+\DeclareMathOperator{\id}{id}
+
 \begin{document}
     \maketitle
     Упростить следующие выражения:
 )";
 
 static constexpr char kTexEnd[] = R"(
+Powered by Tungsten Beta
 \end{document}
 )";
 

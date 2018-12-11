@@ -8,7 +8,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra")
 include_directories(include)
 
 add_executable(repl src/repl.cpp src/expression.cpp)
-# add_executable(tex src/tex.cpp src/expression.cpp)
+add_executable(tex src/tex.cpp src/expression.cpp)
 
 add_custom_target(preproc g++ -DPREPROC_ONLY -P -E ${CMAKE_CURRENT_SOURCE_DIR}/include/calculus_grammar.h -o grammar_preproc.h
     COMMAND view grammar_preproc.h)
