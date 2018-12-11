@@ -20,18 +20,17 @@ static ExpressionPtr Inverse(const ExpressionPtr& expr) {
     return result;
 }
 
-const ExpressionPtr kConstantZero = std::make_shared<Constant>(0);
-const ExpressionPtr kConstantOne  = std::make_shared<Constant>(1);
-const ExpressionPtr kConstantPi   = std::make_shared<Constant>(M_PI);
-
-constexpr char kVariableStubName = '_';
-const ExpressionPtr kVariableStub = std::make_shared<Variable>(kVariableStubName);
+const ExpressionPtr kConstantZero   = std::make_shared<Constant>(0);
+const ExpressionPtr kConstantOne    = std::make_shared<Constant>(1);
+const ExpressionPtr kConstantNegOne = std::make_shared<Constant>(-1);
+const ExpressionPtr kConstantPi     = std::make_shared<Constant>(M_PI);
 
 static const std::unordered_map<std::string, ExpressionPtr> kTableOfDerivatives = {
     {"sin", std::make_shared<Function>("cos")},
     {"cos", std::make_shared<NegateOp>(std::make_shared<Function>("sin"))},
-    {"log", Inverse(kVariableStub)},
+    {"log", Inverse(std::make_shared<Function>("id"))},
     {"exp", std::make_shared<Function>("exp")},
+    {"id",  kConstantOne},
 };
 
 static const std::unordered_map<std::string, double(*)(double)> kUnaryFunctionTable = {
@@ -39,6 +38,7 @@ static const std::unordered_map<std::string, double(*)(double)> kUnaryFunctionTa
     {"cos", std::cos},
     {"log", std::log},
     {"exp", std::exp},
+    {"id",  [](double x) { return x; }},
 };
 
 static bool IsZero(double x) {
@@ -55,6 +55,8 @@ static bool Is(const ExpressionPtr& ptr) {
     return As<T>(ptr) != nullptr;
 }
 
+/* ---------------------------------------- Constant ---------------------------------------- */
+
 ExpressionPtr Constant::Simplify() {
     return shared_from_this();
 }
@@ -67,6 +69,10 @@ ExpressionPtr Constant::Call(const std::vector<ExpressionPtr>&) {
     return shared_from_this();
 }
 
+ExpressionPtr Constant::Substitute(char, const ExpressionPtr&) {
+    return shared_from_this();
+}
+
 void Constant::Print(std::ostream& out, int) const {
     out << value_;
 }
@@ -76,27 +82,22 @@ bool Constant::DeepCompare(const ExpressionPtr& other) const {
     return std::fabs(value_ - ptr->value_) < kDoubleTolerance;
 }
 
+/* ---------------------------------------- Variable ---------------------------------------- */
+
 ExpressionPtr Variable::Simplify() {
     return shared_from_this();
 }
 
 ExpressionPtr Variable::TakeDerivative(char var_name) {
-    return (var_name == name_ || name_ == kVariableStubName) ? kConstantOne : kConstantZero;
+    return (var_name == name_) ? kConstantOne : kConstantZero;
 }
 
-ExpressionPtr Variable::Call(const std::vector<ExpressionPtr>& args) {
-    if (args.size() == 1) {
-        return name_ == kVariableStubName ? args[0] : shared_from_this();
-    }
-    if (args.size() != 2) {
-        std::string what = "Argument count mismatch: expected 2, got ";
-        what += std::to_string(args.size());
-        throw RuntimeError(what);
-    }
-    if (!Is<Variable>(args[0])) {
-        throw RuntimeError("Bad first argument, expected variable");
-    }
-    return As<Variable>(args[0])->GetName() == name_ ? args[1] : shared_from_this();
+ExpressionPtr Variable::Call(const std::vector<ExpressionPtr>&) {
+    return shared_from_this();
+}
+
+ExpressionPtr Variable::Substitute(char var_name, const ExpressionPtr& other) {
+    return var_name == name_ ? other : shared_from_this();
 }
 
 void Variable::Print(std::ostream& out, int) const {
@@ -107,6 +108,8 @@ bool Variable::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     return name_ == ptr->name_;
 }
+
+/* ---------------------------------------- Function ---------------------------------------- */
 
 ExpressionPtr Function::Simplify() {
     return shared_from_this();
@@ -136,6 +139,11 @@ ExpressionPtr Function::Call(const std::vector<ExpressionPtr>& args) {
     }
 
     const auto& arg = args[0]->Simplify();
+
+    if (name_ == "id") {
+        return arg;
+    }
+
     auto iter = kUnaryFunctionTable.find(name_);
     if (!Is<Constant>(arg) || iter == kUnaryFunctionTable.end()) {
         return std::make_shared<CallOp>(shared_from_this(), args);
@@ -143,6 +151,10 @@ ExpressionPtr Function::Call(const std::vector<ExpressionPtr>& args) {
 
     double result = iter->second(As<Constant>(arg)->GetValue());
     return BuildConstant(result);
+}
+
+ExpressionPtr Function::Substitute(char, const ExpressionPtr&) {
+    return shared_from_this();
 }
 
 void Function::Print(std::ostream& out, int) const {
@@ -153,6 +165,8 @@ bool Function::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     return name_ == ptr->name_;
 }
+
+/* ---------------------------------------- Sum ---------------------------------------- */
 
 template <class T>
 void AssociativeOpAlign(const std::vector<AssociativeOperand>& operands, bool global_inverse, std::vector<AssociativeOperand>* result) {
@@ -285,6 +299,16 @@ ExpressionPtr Sum::Call(const std::vector<ExpressionPtr>& args) {
     return std::make_shared<Sum>(std::move(summands));
 }
 
+ExpressionPtr Sum::Substitute(char var_name, const ExpressionPtr& expr) {
+    decltype(summands_) summands;
+    summands.reserve(summands_.size());
+    for (const auto& summand : summands_) {
+        summands.emplace_back(summand.expr->Substitute(var_name, expr), summand.inverse);
+    }
+
+    return std::make_shared<Sum>(std::move(summands));
+}
+
 void Sum::Print(std::ostream& out, int cur_priority_level) const {
     if (cur_priority_level > kSumPriorityLevel) {
         out << '(';
@@ -331,6 +355,8 @@ Sum& Sum::operator-=(const ExpressionPtr& expr) {
 void Sum::ReserveSize(int size) {
     summands_.reserve(size);
 }
+
+/* ---------------------------------------- Product ---------------------------------------- */
 
 ExpressionPtr Product::Simplify() {
     if (multipliers_.size() == 1 && !multipliers_[0].inverse) {
@@ -384,22 +410,64 @@ ExpressionPtr Product::Simplify() {
         multipliers_copy.back().inverse = false;
     }
 
+    // Power folding
+
     for (size_t i = 0; i < multipliers_copy.size(); ++i) {
         if (Is<Constant>(multipliers_copy[i].expr)) {
             continue;
         }
+
+        auto total_power = std::make_shared<Sum>();
+
+        auto simple = multipliers_copy[i].expr;
+        if (Is<PowerOp>(simple)) {
+            auto exp = As<PowerOp>(simple)->GetExp();
+            simple = As<PowerOp>(simple)->GetBase();
+            *total_power += exp;
+        } else {
+            *total_power += kConstantOne;
+        }
+
+        bool found_similars = false;
         for (size_t j = i + 1; j < multipliers_copy.size(); ++j) {
             if (Is<Constant>(multipliers_copy[j].expr)) {
                 continue;
             }
-            if (multipliers_copy[i].inverse != multipliers_copy[j].inverse) {
+            bool not_equal_inverse = multipliers_copy[i].inverse != multipliers_copy[j].inverse;
+
+            auto other_simple = multipliers_copy[j].expr;
+            ExpressionPtr other_exp = kConstantOne;
+            if (Is<PowerOp>(other_simple)) {
+                other_exp = As<PowerOp>(other_simple)->GetExp();
+                other_simple = As<PowerOp>(other_simple)->GetBase();
+            }
+
+            double ratio = Ratio(simple, other_simple);
+            if (std::isnan(ratio)) {
+                continue;
+            }
+            found_similars = true;
+
+            if (not_equal_inverse) {
+                *total_power -= other_exp;
+            } else {
+                *total_power += other_exp;
+            }
+
+            multipliers_copy[j].expr = std::make_shared<PowerOp>(BuildConstant(ratio), other_exp);
+
+/*            if (multipliers_copy[i].inverse != multipliers_copy[j].inverse) {
                 double ratio = Ratio(multipliers_copy[i].expr, multipliers_copy[j].expr);
                 if (!std::isnan(ratio)) {
                     multipliers_copy[i].expr = BuildConstant(ratio);
                     multipliers_copy[j].expr = kConstantOne;
                     break;
                 }
-            }
+            }*/
+        }
+
+        if (found_similars) {
+            multipliers_copy[i].expr = std::make_shared<PowerOp>(simple, total_power);
         }
     }
 
@@ -437,6 +505,16 @@ ExpressionPtr Product::Call(const std::vector<ExpressionPtr>& args) {
     multipliers.reserve(multipliers_.size());
     for (const auto& multiplier : multipliers_) {
         multipliers.emplace_back(multiplier.expr->Call(args), multiplier.inverse);
+    }
+
+    return std::make_shared<Product>(std::move(multipliers))->Simplify();
+}
+
+ExpressionPtr Product::Substitute(char var_name, const ExpressionPtr& expr) {
+    decltype(multipliers_) multipliers;
+    multipliers.reserve(multipliers_.size());
+    for (const auto& multiplier : multipliers_) {
+        multipliers.emplace_back(multiplier.expr->Substitute(var_name, expr), multiplier.inverse);
     }
 
     return std::make_shared<Product>(std::move(multipliers))->Simplify();
@@ -496,6 +574,8 @@ void Product::ReserveSize(int size) {
     multipliers_.reserve(size);
 }
 
+/* ---------------------------------------- NegateOp ---------------------------------------- */
+
 ExpressionPtr NegateOp::Simplify() {
     if (Is<Constant>(expr_)) {
         return BuildConstant(-As<Constant>(expr_)->GetValue());
@@ -512,6 +592,10 @@ ExpressionPtr NegateOp::TakeDerivative(char var_name) {
 
 ExpressionPtr NegateOp::Call(const std::vector<ExpressionPtr>& args) {
     return std::make_shared<NegateOp>(expr_->Call(args));
+}
+
+ExpressionPtr NegateOp::Substitute(char var_name, const ExpressionPtr& value) {
+    return std::make_shared<NegateOp>(expr_->Substitute(var_name, value));
 }
 
 void NegateOp::Print(std::ostream& out, int cur_priority_level) const {
@@ -531,6 +615,8 @@ bool NegateOp::DeepCompare(const ExpressionPtr& other) const {
     return expr_->DeepCompare(ptr->expr_);
 }
 
+/* ---------------------------------------- Differentiate Op ---------------------------------------- */
+
 ExpressionPtr DifferentiateOp::Simplify() {
     return expr_->Simplify()->TakeDerivative(var_name_);
 }
@@ -548,6 +634,10 @@ ExpressionPtr DifferentiateOp::Call(const std::vector<ExpressionPtr>& args) {
     }
 }
 
+ExpressionPtr DifferentiateOp::Substitute(char var_name, const ExpressionPtr& expr) {
+    return std::make_shared<DifferentiateOp>(expr_->Substitute(var_name, expr), var_name_);
+}
+
 void DifferentiateOp::Print(std::ostream& out, int cur_priority_level) const {
     if (cur_priority_level > kPostfixOpPriorityLevel) {
         out << '(';
@@ -563,6 +653,8 @@ bool DifferentiateOp::DeepCompare(const ExpressionPtr& other) const {
     COMPARE_CHECK_TRIVIAL
     return var_name_ == ptr->var_name_ && expr_->DeepCompare(ptr->expr_);
 }
+
+/* ---------------------------------------- Call Op ---------------------------------------- */
 
 ExpressionPtr CallOp::Simplify() {
     std::vector<ExpressionPtr> simplified_args;
@@ -584,7 +676,9 @@ ExpressionPtr CallOp::TakeDerivative(char var_name) {
     return std::make_shared<DifferentiateOp>(shared_from_this(), var_name);
 }
 
-ExpressionPtr CallOp::Call(const std::vector<ExpressionPtr>& args) {
+ExpressionPtr CallOp::Call(const std::vector<ExpressionPtr>&/* args*/) {
+    return shared_from_this();
+    /*
     std::vector<ExpressionPtr> called_args;
     called_args.reserve(args_.size());
 
@@ -593,6 +687,19 @@ ExpressionPtr CallOp::Call(const std::vector<ExpressionPtr>& args) {
     }
 
     return std::make_shared<CallOp>(func_->Call(called_args), args);
+    */
+}
+
+ExpressionPtr CallOp::Substitute(char var_name, const ExpressionPtr& value) {
+    std::vector<ExpressionPtr> new_args;
+    new_args.reserve(args_.size());
+
+    for (const auto& arg : args_) {
+        new_args.push_back(arg->Substitute(var_name, value));
+    }
+
+    return std::make_shared<CallOp>(func_->Substitute(var_name, value), new_args);
+
 }
 
 void CallOp::Print(std::ostream& out, int cur_priority_level) const {
@@ -623,6 +730,124 @@ bool CallOp::DeepCompare(const ExpressionPtr& other) const {
     }
     return true;
 }
+
+/* ---------------------------------------- PowerOp ---------------------------------------- */
+
+ExpressionPtr PowerOp::Simplify() {
+    if (Is<Constant>(base_)) {
+        double base = As<Constant>(base_)->GetValue();
+        if (IsZero(base)) {
+            return kConstantZero;
+        }
+        if (IsZero(base - 1)) {
+            return kConstantOne;
+        }
+    }
+
+    if (Is<Constant>(exp_)) {
+        double exp = As<Constant>(exp_)->GetValue();
+        if (IsZero(exp)) {
+            return kConstantOne;
+        }
+        if (IsZero(exp - 1)) {
+            return base_;
+        }
+        if (Is<Constant>(base_)) {
+            return BuildConstant(std::pow(As<Constant>(base_)->GetValue(), exp));
+        }
+    }
+    if (Is<PowerOp>(base_)) {
+        auto new_exp = std::make_shared<Sum>();
+        *new_exp += exp_;
+        *new_exp += As<PowerOp>(base_)->exp_;
+        return std::make_shared<PowerOp>(As<PowerOp>(base_)->base_, new_exp)->Simplify();
+    }
+    return std::make_shared<PowerOp>(base_->Simplify(), exp_->Simplify());
+}
+
+ExpressionPtr PowerOp::TakeDerivative(char var_name) {
+    auto prod1 = std::make_shared<Product>();
+    auto sum = std::make_shared<Sum>();
+    auto prod2 = std::make_shared<Product>();
+    auto prod3 = std::make_shared<Product>();
+
+    *prod2 *= exp_->TakeDerivative(var_name);
+    *prod2 *= std::make_shared<CallOp>(std::make_shared<Function>("log"), std::vector<ExpressionPtr>{base_});
+
+    *prod3 *= exp_;
+    *prod3 *= base_->TakeDerivative(var_name);
+    *prod3 /= base_;
+
+    *sum += prod2;
+    *sum += prod3;
+
+    *prod1 *= sum;
+    *prod1 *= shared_from_this();
+    return prod1;
+}
+
+ExpressionPtr PowerOp::Call(const std::vector<ExpressionPtr>& args) {
+    return std::make_shared<PowerOp>(base_->Call(args), exp_->Call(args));
+}
+
+ExpressionPtr PowerOp::Substitute(char var_name, const ExpressionPtr& value) {
+    return std::make_shared<PowerOp>(base_->Substitute(var_name, value), exp_->Substitute(var_name, value));
+}
+
+void PowerOp::Print(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << '(';
+    }
+    base_->Print(out, kPostfixOpPriorityLevel);
+    out << " ^ ";
+    exp_->Print(out, kPostfixOpPriorityLevel);
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << ')';
+    }
+}
+
+bool PowerOp::DeepCompare(const ExpressionPtr& other) const {
+    COMPARE_CHECK_TRIVIAL
+    return base_->DeepCompare(ptr->base_) && exp_->DeepCompare(ptr->exp_);
+}
+
+/* ---------------------------------------- SubstOp ---------------------------------------- */
+
+ExpressionPtr SubstOp::Simplify() {
+    return target_->Simplify()->Substitute(var_name_, value_->Simplify());
+}
+
+ExpressionPtr SubstOp::TakeDerivative(char var_name) {
+    return Simplify()->TakeDerivative(var_name);
+}
+
+ExpressionPtr SubstOp::Call(const std::vector<ExpressionPtr>& args) {
+    return Simplify()->Call(args);
+}
+
+ExpressionPtr SubstOp::Substitute(char var_name, const ExpressionPtr& value) {
+    return Simplify()->Substitute(var_name, value);
+}
+
+void SubstOp::Print(std::ostream& out, int cur_priority_level) const {
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << '(';
+    }
+    target_->Print(out, kPostfixOpPriorityLevel);
+    out << '[' << var_name_ << " = ";
+    value_->Print(out, kSumPriorityLevel);
+    out << ']';
+    if (cur_priority_level > kPostfixOpPriorityLevel) {
+        out << ')';
+    }
+}
+
+bool SubstOp::DeepCompare(const ExpressionPtr& other) const {
+    COMPARE_CHECK_TRIVIAL
+    return var_name_ == ptr->var_name_ && target_->DeepCompare(ptr->target_) && value_->DeepCompare(ptr->value_);
+}
+
+/* ---------------------------------------- Misc ---------------------------------------- */
 
 static double RatioOfSums(const std::vector<AssociativeOperand>& l_summands, const std::vector<AssociativeOperand>& r_summands) {
     std::vector<bool> l_used(l_summands.size(), false);
@@ -719,9 +944,9 @@ static double RatioOfProducts(const std::vector<AssociativeOperand>& l_multiplie
         if (Is<Constant>(l_multipliers[l_index].expr)) {
             double value = As<Constant>(l_multipliers[l_index].expr)->GetValue();
             if (l_multipliers[l_index].inverse) {
-                const_ratio *= value;
-            } else {
                 const_ratio /= value;
+            } else {
+                const_ratio *= value;
             }
             continue;
         }

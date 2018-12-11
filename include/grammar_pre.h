@@ -142,6 +142,7 @@ while (true) {                                                                  
 
 
 #define OR3(a, b, c) OR(a, OR(b, c))
+#define OR4(a, b, c, d) OR(a, OR3(b, c, d))
 #define MAYBE(body) OR(body, )
 
 #define DEFTOKENS()

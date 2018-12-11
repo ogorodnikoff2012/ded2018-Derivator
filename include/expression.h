@@ -26,6 +26,7 @@ public:
     virtual ExpressionPtr Simplify() = 0;
     virtual ExpressionPtr TakeDerivative(char var_name) = 0;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) = 0;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) = 0;
     virtual void Print(std::ostream& out, int cur_priority_level = -1) const = 0;
     virtual bool DeepCompare(const ExpressionPtr& other) const = 0;
 };
@@ -40,6 +41,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -63,6 +65,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -82,6 +85,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -115,6 +119,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -141,6 +146,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -161,6 +167,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -180,6 +187,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -196,6 +204,7 @@ public:
     virtual ExpressionPtr Simplify() override;
     virtual ExpressionPtr TakeDerivative(char var_name) override;
     virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
     virtual void Print(std::ostream& out, int cur_priority_level) const override;
     virtual bool DeepCompare(const ExpressionPtr& other) const override;
 
@@ -212,6 +221,50 @@ public:
 private:
     ExpressionPtr func_;
     std::vector<ExpressionPtr> args_;
+};
+
+class PowerOp : public Expression {
+public:
+    virtual ExpressionPtr Simplify() override;
+    virtual ExpressionPtr TakeDerivative(char var_name) override;
+    virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
+    virtual void Print(std::ostream& out, int cur_priority_level) const override;
+    virtual bool DeepCompare(const ExpressionPtr& other) const override;
+
+    explicit PowerOp(const ExpressionPtr& base, const ExpressionPtr& exp) : base_(base), exp_(exp) {
+    }
+
+    const ExpressionPtr& GetBase() const {
+        return base_;
+    }
+
+    const ExpressionPtr& GetExp() const {
+        return exp_;
+    }
+
+private:
+    ExpressionPtr base_;
+    ExpressionPtr exp_;
+};
+
+class SubstOp : public Expression {
+public:
+    virtual ExpressionPtr Simplify() override;
+    virtual ExpressionPtr TakeDerivative(char var_name) override;
+    virtual ExpressionPtr Call(const std::vector<ExpressionPtr>& args) override;
+    virtual ExpressionPtr Substitute(char var_name, const ExpressionPtr& value) override;
+    virtual void Print(std::ostream& out, int cur_priority_level) const override;
+    virtual bool DeepCompare(const ExpressionPtr& other) const override;
+
+    explicit SubstOp(const ExpressionPtr& target, char var_name, const ExpressionPtr& value)
+        : target_(target), var_name_(var_name), value_(value) {
+    }
+
+private:
+    ExpressionPtr target_;
+    char var_name_;
+    ExpressionPtr value_;
 };
 
 double Ratio(const ExpressionPtr& lhs, const ExpressionPtr& rhs);

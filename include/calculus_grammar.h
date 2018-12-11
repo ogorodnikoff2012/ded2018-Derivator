@@ -1,5 +1,4 @@
 #include "grammar_pre.h"
-#include <variant>
 #include <ostream>
 
 #include "expression.h"
@@ -110,24 +109,47 @@ virtual void Print(std::ostream& out) override { \
                 auto result = children_[atom_pos]->BuildExpression();
                 for (size_t i = atom_pos + 1; i < children_.size(); ++i) {
                     auto& op = children_[i]->GetChildren()[0];
-                    if (op->GetType() == kDiffOpType) {
-                        if (op->GetChildren().empty()) {
-                            result = std::make_shared<calculus::DifferentiateOp>(result, calculus::kDefaultDerivativeVariable);
-                        } else {
-                            const std::string& name = dynamic_cast<const IdentifierNode*>(op->GetChildren()[0].get())->GetStr();
-                            if (name.size() == 1 && std::islower(name[0])) {
-                                result = std::make_shared<calculus::DifferentiateOp>(result, name[0]);
+                    switch (op->GetType()) {
+                        case kDiffOpType:
+                        {
+                            if (op->GetChildren().empty()) {
+                                result = std::make_shared<calculus::DifferentiateOp>(result, calculus::kDefaultDerivativeVariable);
                             } else {
+                                const std::string& name = dynamic_cast<const IdentifierNode*>(op->GetChildren()[0].get())->GetStr();
+                                if (name.size() == 1 && std::islower(name[0])) {
+                                    result = std::make_shared<calculus::DifferentiateOp>(result, name[0]);
+                                } else {
+                                    throw SyntaxError("Bad variable name");
+                                }
+                            }
+                            break;
+                        }
+                        case kCallOpType:
+                        {
+                            std::vector<calculus::ExpressionPtr> args;
+                            args.reserve(op->GetChildren().size());
+                            for (const auto& arg : op->GetChildren()[0]->GetChildren()) {
+                                args.push_back(arg->BuildExpression());
+                            }
+                            result = std::make_shared<calculus::CallOp>(result, std::move(args));
+                            break;
+                        }
+                        case kPowerOpType:
+                        {
+                            result = std::make_shared<calculus::PowerOp>(result, op->GetChildren()[0]->BuildExpression());
+                            break;
+                        }
+                        case kSubstOpType:
+                        {
+                            const std::string& name = dynamic_cast<const IdentifierNode*>(op->GetChildren()[0].get())->GetStr();
+                            if (name.size() != 1 || !std::islower(name[0])) {
                                 throw SyntaxError("Bad variable name");
                             }
+                            result = std::make_shared<calculus::SubstOp>(result, name[0], op->GetChildren()[1]->BuildExpression());
+                            break;
                         }
-                    } else /* if (op->GetType() == kCallOpType) */ {
-                        std::vector<calculus::ExpressionPtr> args;
-                        args.reserve(op->GetChildren().size());
-                        for (const auto& arg : op->GetChildren()[0]->GetChildren()) {
-                            args.push_back(arg->BuildExpression());
-                        }
-                        result = std::make_shared<calculus::CallOp>(result, std::move(args));
+                        default:
+                            throw std::runtime_error("NOT IMPLEMENTED");
                     }
                 }
 
@@ -185,9 +207,11 @@ virtual void Print(std::ostream& out) override { \
         DEFRULE(PostfixOp)
             NON_CALLABLE
         BEGINRULE(PostfixOp)
-            OR(
-                EXPECT(diff_op, RULE(DiffOp)),
-                EXPECT(call_op, RULE(CallOp))
+            OR4(
+                EXPECT(diff_op,  RULE(DiffOp)),
+                EXPECT(call_op,  RULE(CallOp)),
+                EXPECT(power_op, RULE(PowerOp)),
+                EXPECT(subst_op, RULE(SubstOp))
             );
         ENDRULE(PostfixOp)
 
@@ -210,6 +234,23 @@ virtual void Print(std::ostream& out) override { \
             EXPECT(args, RULE(ArgList));
             TOKEN(RightParen);
         ENDRULE(CallOp)
+
+        DEFRULE(PowerOp)
+            NON_CALLABLE
+        BEGINRULE(PowerOp)
+            TOKEN(Power);
+            EXPECT(exponent, RULE(Atom));
+        ENDRULE(PowerOp)
+
+        DEFRULE(SubstOp)
+            NON_CALLABLE
+        BEGINRULE(SubstOp)
+            TOKEN(LeftBracket);
+            EXPECT(name, TOKEN(Identifier));
+            TOKEN(Assign);
+            EXPECT(value, RULE(Expression));
+            TOKEN(RightBracket);
+        ENDRULE(SubstOp)
 
         DEFRULE(ArgList)
             NON_CALLABLE
@@ -295,6 +336,26 @@ virtual void Print(std::ostream& out) override { \
         ENDTOKEN()
 
         DEFTOKEN(RightParen, "\\)")
+            NON_CALLABLE
+            TOKEN_PRINT
+        ENDTOKEN()
+
+        DEFTOKEN(Assign, "=")
+            NON_CALLABLE
+            TOKEN_PRINT
+        ENDTOKEN()
+
+        DEFTOKEN(Power, "\\^")
+            NON_CALLABLE
+            TOKEN_PRINT
+        ENDTOKEN()
+
+        DEFTOKEN(LeftBracket, "\\[")
+            NON_CALLABLE
+            TOKEN_PRINT
+        ENDTOKEN()
+
+        DEFTOKEN(RightBracket, "\\]")
             NON_CALLABLE
             TOKEN_PRINT
         ENDTOKEN()
