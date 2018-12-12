@@ -1,7 +1,19 @@
+#pragma once
+
 #include "grammar_pre.h"
 #include <ostream>
 
 #include "expression.h"
+#include "sum.h"
+#include "product.h"
+#include "differentiate_op.h"
+#include "call_op.h"
+#include "power_op.h"
+#include "subst_op.h"
+#include "negate_op.h"
+#include "variable.h"
+#include "constant.h"
+#include "function.h"
 
 DEFGRAMMAR(Calculus)
     DEFBASICNODE()
@@ -34,20 +46,6 @@ DEFGRAMMAR(Calculus)
             EXPECT(expr, RULE(Expression));
             TOKEN(Eoln);
         ENDRULE(MainRule)
-/*
-#define RULE_PRINT \
-virtual void Print(std::ostream& out) override { \
-    bool is_first = true; \
-    for (const auto& [name, node] : children_) {\
-        if (is_first) {\
-            is_first = false;\
-        } else {\
-            out << ' ';\
-        }\
-        node->Print(out);\
-    }\
-}
-*/
 
         DEFRULE(Expression)
             virtual calculus::ExpressionPtr BuildExpression() override {

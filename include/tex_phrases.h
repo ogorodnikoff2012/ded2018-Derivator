@@ -15,6 +15,7 @@ static constexpr char kTexPreamble[] = R"(
 \usepackage{paralist}
 \usepackage{xcolor}
 \usepackage{tcolorbox}
+\usepackage{breqn}
 
 \title{Домашнее задание по математическому анализу}
 \author{Владимир Огородников}
@@ -35,3 +36,6 @@ static constexpr char kTexEnd[] = R"(
 static constexpr char kTexError[] = R"(
     Упс, что-то пошло не так...
 )";
+
+static constexpr char kTexMathBegin[] = "\\begin{dmath*}";
+static constexpr char kTexMathEnd[] = "\\end{dmath*}";
