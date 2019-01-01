@@ -94,7 +94,7 @@ void PowerOp::TexDump(std::ostream& out, int cur_priority_level) const {
     }
     if (Is<Constant>(exp_) && IsZero(As<Constant>(exp_)->GetValue() - 0.5)) {
         out << "\\sqrt{";
-        base_->TexDump(out, kPostfixOpPriorityLevel);
+        base_->TexDump(out, kSumPriorityLevel);
         out << '}';
     } else {
         base_->TexDump(out, kPostfixOpPriorityLevel);

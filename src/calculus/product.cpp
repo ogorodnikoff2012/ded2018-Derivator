@@ -106,7 +106,7 @@ ExpressionPtr Product::Simplify() {
                 other_simple = As<PowerOp>(other_simple)->GetBase();
             }
 
-            double ratio = Ratio(simple, other_simple);
+            double ratio = Ratio(other_simple, simple);
             if (std::isnan(ratio)) {
                 continue;
             }
